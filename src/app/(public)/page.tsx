@@ -225,7 +225,7 @@ export default function Home() {
 
   const scrollToRaffles = () => {
     const rafflesSection = document.getElementById('raffles-section');
-    if (raffesSection) {
+    if (rafflesSection) {
       rafflesSection.scrollIntoView({ behavior: 'smooth' });
     }
   };
