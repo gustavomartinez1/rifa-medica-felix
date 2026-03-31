@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/shared/lib/supabase';
 import { HeroSection } from '@/features/hero/components/HeroSection';
 import { CauseSection } from '@/features/cause/components/CauseSection';
@@ -91,7 +91,7 @@ export default function Home() {
     };
   }, []);
 
-  // Check for locally reserved tickets
+  // Check for locally reserved tickets (for "Ya realicé mi pago" button)
   useEffect(() => {
     const stored = localStorage.getItem('reserved_ticket_ids');
     if (stored) {
@@ -131,17 +131,24 @@ export default function Home() {
 
     try {
       const ticketIds = selectedTickets.map((t) => t.id);
+      const expiresAt = new Date(Date.now() + EXPIRATION_MINUTES * 60 * 1000).toISOString();
 
+      // Call API to reserve tickets
       const response = await fetch('/api/reserve-ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticketIds, buyerInfo }),
+        body: JSON.stringify({
+          ticketIds,
+          buyerInfo,
+        }),
       });
 
       const result: ReserveTicketResponse = await response.json();
 
       if (!result.success) {
+        // Handle error - some tickets may have been taken
         if (result.error?.includes('tomado')) {
+          // Find which tickets are no longer available
           const takenTickets = selectedTickets.filter(
             (t) => result.error?.includes(`#${t.ticket_number}`)
           );
@@ -149,15 +156,19 @@ export default function Home() {
             (t) => !takenTickets.includes(t)
           );
           setSelectedTickets(availableTickets);
-          setShowError(`Los boletos ${takenTickets.map((t) => t.ticket_number).join(', ')} ya fueron tomados.`);
+          setShowError(
+            `Los boletos ${takenTickets.map((t) => t.ticket_number).join(', ')} ya fueron tomados. Los demás están reservados.`
+          );
         } else {
           setShowError(result.error || 'Error al reservar los boletos');
         }
         return;
       }
 
+      // Store reserved ticket IDs in localStorage
       localStorage.setItem('reserved_ticket_ids', JSON.stringify(ticketIds));
       setReservedTicketIds(ticketIds);
+
       setStep('payment');
     } catch (err) {
       console.error('Error reserving tickets:', err);
@@ -172,7 +183,10 @@ export default function Home() {
     setShowError(null);
 
     try {
-      const reservedIds = reservedTicketIds.length > 0 ? reservedTicketIds : selectedTickets.map((t) => t.id);
+      // Get the first reserved ticket to check status
+      const reservedIds = reservedTicketIds.length > 0 
+        ? reservedTicketIds 
+        : selectedTickets.map((t) => t.id);
 
       const response = await fetch('/api/claim-payment', {
         method: 'POST',
@@ -188,6 +202,8 @@ export default function Home() {
       }
 
       setStep('confirmed');
+      
+      // Clear localStorage after confirmation
       localStorage.removeItem('reserved_ticket_ids');
       setReservedTicketIds([]);
       setSelectedTickets([]);
@@ -214,24 +230,34 @@ export default function Home() {
     }
   };
 
+  // Check if any of the selected tickets have a pending "Ya realicé mi pago" state for this user
+  const canClaimPayment = reservedTicketIds.length > 0 && step === 'payment';
+
   return (
     <main className="min-h-screen">
       <HeroSection onCtaClick={scrollToRaffles} />
       <CauseSection />
 
+      {/* Raffles Section */}
       <section id="raffles-section" className="py-16 md:py-24 bg-gray-50">
         <div className="max-w-6xl mx-auto px-4">
           <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Las 3 Rifas</h2>
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+              Las 3 Rifa
+            </h2>
             <div className="w-24 h-1 bg-emerald-500 mx-auto rounded-full" />
             <p className="text-gray-600 mt-4 max-w-2xl mx-auto">
-              Elige tus boletos favoritos y participa para ganar premios increíbles
+              Elige tus boletos favoritos y participa para ganar amazing premios
             </p>
           </div>
 
           {loading ? (
             <div className="flex justify-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600" />
+            </div>
+          ) : showError && selectedTickets.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-red-600">{showError}</p>
             </div>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -247,6 +273,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* Selection Summary & Proceed Button */}
           {selectedTickets.length > 0 && step === 'raffles' && (
             <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4 md:p-6 z-40">
               <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
@@ -254,7 +281,9 @@ export default function Home() {
                   <p className="font-medium text-gray-900">
                     {selectedTickets.length} boleto{selectedTickets.length > 1 ? 's' : ''} seleccionado{selectedTickets.length > 1 ? 's' : ''}
                   </p>
-                  <p className="text-sm text-gray-500">Total: ${selectedTickets.length * 50} MXN</p>
+                  <p className="text-sm text-gray-500">
+                    Total: ${selectedTickets.length * 50} MXN
+                  </p>
                 </div>
                 <button
                   onClick={handleProceedToForm}
@@ -271,12 +300,24 @@ export default function Home() {
       <BankingInfo />
       <Footer />
 
-      <Modal isOpen={step === 'form' || step === 'payment' || step === 'confirmed'} onClose={handleCloseModal}>
+      {/* Purchase Modal */}
+      <Modal
+        isOpen={step === 'form' || step === 'payment' || step === 'confirmed'}
+        onClose={handleCloseModal}
+        title={step === 'confirmed' ? '¡Gracias!' : undefined}
+      >
         {step === 'form' && (
-          <PurchaseForm selectedTickets={selectedTickets} onSubmit={handleSubmitPurchase} isLoading={isSubmitting} />
+          <PurchaseForm
+            selectedTickets={selectedTickets}
+            onSubmit={handleSubmitPurchase}
+            isLoading={isSubmitting}
+          />
         )}
         {step === 'payment' && (
-          <PaymentInstructions tickets={selectedTickets} onPaymentClaimed={handlePaymentClaimed} />
+          <PaymentInstructions
+            tickets={selectedTickets}
+            onPaymentClaimed={handlePaymentClaimed}
+          />
         )}
         {step === 'confirmed' && (
           <div className="text-center py-8">
@@ -286,18 +327,29 @@ export default function Home() {
               </svg>
             </div>
             <h3 className="text-2xl font-bold text-gray-900 mb-2">¡Gracias por el apoyo!</h3>
-            <p className="text-gray-600 mb-6">Tu boleto ha sido confirmado.</p>
-            <button onClick={handleCloseModal} className="bg-emerald-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-emerald-700">
+            <p className="text-gray-600 mb-6">
+              Tu boleto ha sido confirmado. El premio se entrega el día de la rifa.
+            </p>
+            <button
+              onClick={handleCloseModal}
+              className="bg-emerald-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-emerald-700 transition-colors"
+            >
               Cerrar
             </button>
           </div>
         )}
       </Modal>
 
+      {/* Error Toast */}
       {showError && step === 'raffles' && (
         <div className="fixed top-4 right-4 bg-red-600 text-white px-6 py-4 rounded-xl shadow-lg z-50 max-w-sm">
           <p>{showError}</p>
-          <button onClick={() => setShowError(null)} className="absolute top-2 right-2 text-white/80 hover:text-white">×</button>
+          <button
+            onClick={() => setShowError(null)}
+            className="absolute top-2 right-2 text-white/80 hover:text-white"
+          >
+            ×
+          </button>
         </div>
       )}
     </main>
