@@ -39,5 +39,5 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           projectName: rifa-medica
-          directory: .next
+          directory: out
           branch: master
